@@ -137,9 +137,15 @@ def _normalize_row(row: dict) -> dict:
 def _filter_rows(predicate) -> list[dict]:
     try:
         ws = _get_worksheet()
-        all_records = ws.get_all_records(expected_headers=SHEET_COLUMNS)
+        all_records = ws.get_all_records(
+            expected_headers=SHEET_COLUMNS,
+            numericise_ignore=["all"],
+        )
     except Exception as exc:
         logger.warning("Sheet read failed (%s), reconnecting…", exc)
         ws = _reconnect()
-        all_records = ws.get_all_records(expected_headers=SHEET_COLUMNS)
+        all_records = ws.get_all_records(
+            expected_headers=SHEET_COLUMNS,
+            numericise_ignore=["all"],
+        )
     return [_normalize_row(r) for r in all_records if predicate(r)]
