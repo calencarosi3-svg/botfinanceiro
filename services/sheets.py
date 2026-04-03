@@ -107,6 +107,33 @@ def get_rows_for_period(start: str, end: str) -> list[dict]:
     return _filter_rows(lambda r: start <= r.get("Data", "") <= end)
 
 
+def _normalize_valor(valor) -> float:
+    """Convert any Valor format to a clean float.
+    Handles: 34.62, 34,62, '34,62', '34.62', 'R$ 34,62', 1234.56, '1.234,56'
+    """
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    s = str(valor).strip().replace("R$", "").replace(" ", "")
+    # Format: 1.234,56 (BR) — dot as thousands, comma as decimal
+    if "," in s and "." in s:
+        s = s.replace(".", "").replace(",", ".")
+    # Format: 34,62 (BR) — only comma as decimal
+    elif "," in s:
+        s = s.replace(",", ".")
+    # Format: 34.62 (US/plain float) — keep as is
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def _normalize_row(row: dict) -> dict:
+    """Return a copy of the row with Valor as a clean float."""
+    r = dict(row)
+    r["Valor"] = _normalize_valor(r.get("Valor", 0))
+    return r
+
+
 def _filter_rows(predicate) -> list[dict]:
     try:
         ws = _get_worksheet()
@@ -115,4 +142,4 @@ def _filter_rows(predicate) -> list[dict]:
         logger.warning("Sheet read failed (%s), reconnecting…", exc)
         ws = _reconnect()
         all_records = ws.get_all_records(expected_headers=SHEET_COLUMNS)
-    return [r for r in all_records if predicate(r)]
+    return [_normalize_row(r) for r in all_records if predicate(r)]
