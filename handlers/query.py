@@ -41,12 +41,17 @@ def _parse_period(question: str) -> tuple[str, str, str]:
     if "hoje" in lower:
         return today.isoformat(), today.isoformat(), "hoje"
 
-    # "este mês" / "esse mês" or default
-    year, month = today.year, today.month
-    last_day = monthrange(year, month)[1]
-    start = date(year, month, 1).isoformat()
-    end = date(year, month, last_day).isoformat()
-    return start, end, f"{month:02d}/{year}"
+    # "este mês" / "esse mês"
+    if "este mês" in lower or "esse mês" in lower or "este mes" in lower or "esse mes" in lower:
+        year, month = today.year, today.month
+        last_day = monthrange(year, month)[1]
+        start = date(year, month, 1).isoformat()
+        end = date(year, month, last_day).isoformat()
+        return start, end, f"{month:02d}/{year}"
+
+    # Default: últimos 30 dias
+    start = (today - timedelta(days=30)).isoformat()
+    return start, today.isoformat(), "últimos 30 dias"
 
 
 async def handle_query(
