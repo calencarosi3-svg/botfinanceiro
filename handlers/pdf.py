@@ -154,11 +154,12 @@ async def _handle_csv(update, context, document) -> None:
 
 def _parse_csv(text: str) -> list[dict]:
     """
-    Parse a CSV file into a list of expense dicts.
+    Parse a CSV into a list of expense dicts.
 
-    Accepts two formats:
-    1. Columns matching SHEET_COLUMNS (Data, Valor, Estabelecimento, …)
-    2. Generic bank export with any columns — passed to AI for extraction.
+    Strategy:
+    1. Try to find columns for date, amount, and description using common aliases.
+    2. For each row: clean valor with _parse_valor, date with _parse_date, skip negatives.
+    3. If no recognizable columns found, fall back to AI extraction.
     """
     reader = csv.DictReader(io.StringIO(text))
     rows = list(reader)
@@ -166,22 +167,105 @@ def _parse_csv(text: str) -> list[dict]:
         return []
 
     headers = [h.strip() for h in (reader.fieldnames or [])]
+    h_lower = {h.lower(): h for h in headers}
 
-    # Format 1: headers already match our schema
-    if "Data" in headers and "Valor" in headers:
-        result = []
-        for row in rows:
-            cleaned = {k.strip(): v.strip() for k, v in row.items() if k}
-            if not cleaned.get("Valor"):
-                continue
-            try:
-                float(cleaned["Valor"].replace(",", "."))
-            except ValueError:
-                continue
-            cleaned["Valor"] = cleaned["Valor"].replace(",", ".")
-            result.append(cleaned)
-        return result
+    # --- Column aliases ---
+    _DATE_ALIASES    = ["data", "date", "dt", "data lançamento", "data pagamento"]
+    _VALOR_ALIASES   = ["valor", "value", "amount", "quantia", "vlr", "total"]
+    _DESC_ALIASES    = ["estabelecimento", "lançamento", "lancamento", "descrição",
+                        "descricao", "description", "historico", "histórico",
+                        "comercio", "comércio", "memo", "nome"]
+    _CAT_ALIASES     = ["categoria", "category"]
+    _BANCO_ALIASES   = ["banco", "bank", "instituição", "instituicao"]
+    _TIPO_ALIASES    = ["tipo", "type", "modalidade", "forma pagamento"]
 
-    # Format 2: unknown headers — convert to text and let AI extract
-    expenses = ai.extract_from_pdf(text)  # reuses same PDF extraction prompt
-    return expenses
+    def _find(aliases) -> str | None:
+        for a in aliases:
+            if a in h_lower:
+                return h_lower[a]
+        return None
+
+    col_data  = _find(_DATE_ALIASES)
+    col_valor = _find(_VALOR_ALIASES)
+    col_desc  = _find(_DESC_ALIASES)
+    col_cat   = _find(_CAT_ALIASES)
+    col_banco = _find(_BANCO_ALIASES)
+    col_tipo  = _find(_TIPO_ALIASES)
+
+    if not col_valor:
+        # No recognizable amount column — let AI handle it
+        return ai.extract_from_pdf(text)
+
+    _CAT_MAP = {
+        "restaurantes": "Alimentação",
+        "supermercado": "Alimentação",
+        "alimentacao": "Alimentação",
+        "alimentação": "Alimentação",
+        "transporte": "Transporte",
+        "servicos": "Serviços",
+        "serviços": "Serviços",
+        "compras": "Outros",
+        "saude": "Saúde",
+        "saúde": "Saúde",
+        "drogaria": "Saúde",
+        "petshop": "Outros",
+        "lazer": "Lazer",
+        "moradia": "Moradia",
+        "vestuario": "Vestuário",
+        "vestuário": "Vestuário",
+        "educacao": "Educação",
+        "educação": "Educação",
+        "outros": "Outros",
+    }
+
+    result = []
+    for row in rows:
+        r = {k.strip(): (v.strip() if v else "") for k, v in row.items() if k}
+
+        valor = _parse_valor(r.get(col_valor, ""))
+        if valor is None or valor <= 0:
+            continue
+
+        data  = _parse_date(r.get(col_data, "") if col_data else "")
+        desc  = r.get(col_desc, "") if col_desc else ""
+        cat_raw = r.get(col_cat, "").lower() if col_cat else ""
+        categoria = _CAT_MAP.get(cat_raw, "Outros")
+        banco = r.get(col_banco, "") if col_banco else ""
+        tipo_raw = r.get(col_tipo, "").lower() if col_tipo else ""
+        tipo  = "crédito"
+        obs   = tipo_raw if "parcela" in tipo_raw else ""
+
+        result.append({
+            "Data": data,
+            "Valor": str(valor),
+            "Estabelecimento": desc,
+            "Categoria": categoria,
+            "Banco": banco,
+            "Tipo": tipo,
+            "Obs": obs,
+        })
+
+    return result
+
+
+def _parse_valor(raw: str) -> float | None:
+    """Convert 'R$ 3,50' or '-R$ 2.150,55' to float. Returns None if unparseable."""
+    if not raw:
+        return None
+    cleaned = raw.replace("R$", "").replace(" ", "").replace(".", "").replace(",", ".")
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _parse_date(raw: str) -> str:
+    """Convert DD/MM/YYYY to YYYY-MM-DD. Returns raw if already ISO or unparseable."""
+    if not raw:
+        return date.today().isoformat()
+    if "/" in raw:
+        parts = raw.split("/")
+        if len(parts) == 3:
+            d, m, y = parts
+            return f"{y}-{m.zfill(2)}-{d.zfill(2)}"
+    return raw
