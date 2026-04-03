@@ -99,8 +99,8 @@ def main() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
 
-    # PDF documents
-    app.add_handler(MessageHandler(filters.Document.PDF, handle_document))
+    # PDF and CSV documents
+    app.add_handler(MessageHandler(filters.Document.PDF | filters.Document.MimeType("text/csv"), handle_document))
 
     # Text messages (expenses + queries)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
