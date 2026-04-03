@@ -50,9 +50,24 @@ def ensure_header() -> None:
         logger.info("Inserted header row into sheet")
 
 
+def _build_row(expense: dict) -> list:
+    """Build a sheet row, keeping Valor as float for proper numeric formatting."""
+    row = []
+    for col in SHEET_COLUMNS:
+        val = expense.get(col, "")
+        if col == "Valor":
+            try:
+                row.append(float(str(val).replace(",", ".")))
+            except (ValueError, TypeError):
+                row.append(0.0)
+        else:
+            row.append(str(val))
+    return row
+
+
 def append_row(expense: dict) -> None:
     """Append a single expense dict as a new row."""
-    row = [str(expense.get(col, "")) for col in SHEET_COLUMNS]
+    row = _build_row(expense)
     try:
         ws = _get_worksheet()
         ws.append_row(row, value_input_option="USER_ENTERED")
@@ -66,7 +81,7 @@ def append_rows(expenses: list[dict]) -> None:
     """Append multiple expense dicts as new rows (batch)."""
     if not expenses:
         return
-    rows = [[str(e.get(col, "")) for col in SHEET_COLUMNS] for e in expenses]
+    rows = [_build_row(e) for e in expenses]
     try:
         ws = _get_worksheet()
         ws.append_rows(rows, value_input_option="USER_ENTERED")
