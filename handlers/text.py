@@ -4,7 +4,7 @@ from datetime import date
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from config import ALLOWED_USER_ID
+from config import ALLOWED_USER_IDS
 from services import ai, sheets, db
 from handlers.query import handle_query
 
@@ -26,7 +26,7 @@ def _looks_like_query(text: str) -> bool:
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
+    if ALLOWED_USER_IDS and user_id not in ALLOWED_USER_IDS:
         await update.message.reply_text("Acesso negado.")
         return
 
@@ -104,25 +104,38 @@ async def handle_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             return
 
         expense = expenses[0]
+        warnings = []
+
+        sheets_ok = True
         try:
             sheets.append_row(expense)
-        except Exception as exc:
+        except RuntimeError as exc:
             logger.error("Sheets append failed: %s", exc)
+            warnings.append(f"Google Sheets: {exc}")
+            sheets_ok = False
 
-        db.record_expense(
-            expense_date=expense.get("Data", date.today().isoformat()),
-            valor=float(expense.get("Valor", 0)),
-            estabelecimento=expense.get("Estabelecimento", ""),
-            categoria=expense.get("Categoria", ""),
-            banco=expense.get("Banco", ""),
-            tipo=expense.get("Tipo", ""),
-            obs=expense.get("Obs", ""),
-        )
+        try:
+            db.record_expense(
+                expense_date=expense.get("Data", date.today().isoformat()),
+                valor=float(expense.get("Valor", 0)),
+                estabelecimento=expense.get("Estabelecimento", ""),
+                categoria=expense.get("Categoria", ""),
+                banco=expense.get("Banco", ""),
+                tipo=expense.get("Tipo", ""),
+                obs=expense.get("Obs", ""),
+            )
+        except RuntimeError as exc:
+            logger.critical("SQLite insert failed: %s", exc)
+            if not sheets_ok:
+                warnings.append("Banco local: gasto NÃO foi salvo em lugar nenhum!")
+            else:
+                warnings.append("Banco local: falha ao salvar localmente, mas foi salvo no Sheets.")
 
         valor = float(expense.get("Valor", 0))
-        await query.edit_message_text(
-            f"Gasto registrado! R$ {valor:.2f} — {expense.get('Estabelecimento', '?')}"
-        )
+        msg = f"Gasto registrado! R$ {valor:.2f} — {expense.get('Estabelecimento', '?')}"
+        if warnings:
+            msg += "\n\n⚠️ " + "\n⚠️ ".join(warnings)
+        await query.edit_message_text(msg)
 
     elif data.startswith("cancel_txt_"):
         key = data.replace("cancel_", "")

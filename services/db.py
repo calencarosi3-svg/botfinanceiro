@@ -14,25 +14,29 @@ def _get_conn() -> sqlite3.Connection:
 
 def init_db() -> None:
     """Create tables if they don't exist."""
-    with _get_conn() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS expenses (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at  TEXT NOT NULL,
-                expense_date TEXT NOT NULL,
-                valor       REAL NOT NULL,
-                estabelecimento TEXT,
-                categoria   TEXT,
-                banco       TEXT,
-                tipo        TEXT,
-                obs         TEXT
-            )
-        """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_expense_date ON expenses(expense_date)
-        """)
-        conn.commit()
-    logger.info("Database initialized at %s", DB_PATH)
+    try:
+        with _get_conn() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS expenses (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at  TEXT NOT NULL,
+                    expense_date TEXT NOT NULL,
+                    valor       REAL NOT NULL,
+                    estabelecimento TEXT,
+                    categoria   TEXT,
+                    banco       TEXT,
+                    tipo        TEXT,
+                    obs         TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_expense_date ON expenses(expense_date)
+            """)
+            conn.commit()
+        logger.info("Database initialized at %s", DB_PATH)
+    except sqlite3.Error as exc:
+        logger.critical("Failed to initialize database: %s", exc)
+        raise RuntimeError(f"Erro ao inicializar banco de dados: {exc}") from exc
 
 
 def record_expense(
@@ -46,17 +50,21 @@ def record_expense(
 ) -> int:
     """Insert one expense record. Returns the new row id."""
     now = datetime.utcnow().isoformat()
-    with _get_conn() as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO expenses
-                (created_at, expense_date, valor, estabelecimento, categoria, banco, tipo, obs)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (now, expense_date, valor, estabelecimento, categoria, banco, tipo, obs),
-        )
-        conn.commit()
-        return cur.lastrowid
+    try:
+        with _get_conn() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO expenses
+                    (created_at, expense_date, valor, estabelecimento, categoria, banco, tipo, obs)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (now, expense_date, valor, estabelecimento, categoria, banco, tipo, obs),
+            )
+            conn.commit()
+            return cur.lastrowid
+    except sqlite3.Error as exc:
+        logger.error("Failed to record expense: %s", exc)
+        raise RuntimeError("Erro ao salvar gasto no banco de dados local.") from exc
 
 
 def record_expenses_bulk(rows: list[dict]) -> int:
@@ -77,43 +85,59 @@ def record_expenses_bulk(rows: list[dict]) -> int:
         )
         for r in rows
     ]
-    with _get_conn() as conn:
-        conn.executemany(
-            """
-            INSERT INTO expenses
-                (created_at, expense_date, valor, estabelecimento, categoria, banco, tipo, obs)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            data,
-        )
-        conn.commit()
-    return len(data)
+    try:
+        with _get_conn() as conn:
+            conn.executemany(
+                """
+                INSERT INTO expenses
+                    (created_at, expense_date, valor, estabelecimento, categoria, banco, tipo, obs)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                data,
+            )
+            conn.commit()
+        return len(data)
+    except sqlite3.Error as exc:
+        logger.error("Failed to bulk insert expenses: %s", exc)
+        raise RuntimeError("Erro ao salvar gastos no banco de dados local.") from exc
 
 
 def get_expense_count(for_date: str | None = None) -> int:
     """Return number of expenses for a given date (YYYY-MM-DD). Defaults to today."""
     target = for_date or date.today().isoformat()
-    with _get_conn() as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) FROM expenses WHERE expense_date = ?", (target,)
-        ).fetchone()
-        return row[0] if row else 0
+    try:
+        with _get_conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM expenses WHERE expense_date = ?", (target,)
+            ).fetchone()
+            return row[0] if row else 0
+    except sqlite3.Error as exc:
+        logger.error("Failed to get expense count: %s", exc)
+        return 0
 
 
 def get_expenses_for_date(for_date: str) -> list[dict]:
-    with _get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM expenses WHERE expense_date = ? ORDER BY id",
-            (for_date,),
-        ).fetchall()
-        return [dict(r) for r in rows]
+    try:
+        with _get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM expenses WHERE expense_date = ? ORDER BY id",
+                (for_date,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except sqlite3.Error as exc:
+        logger.error("Failed to get expenses for date %s: %s", for_date, exc)
+        return []
 
 
 def get_expenses_for_month(year: int, month: int) -> list[dict]:
     prefix = f"{year:04d}-{month:02d}"
-    with _get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM expenses WHERE expense_date LIKE ? ORDER BY expense_date, id",
-            (f"{prefix}%",),
-        ).fetchall()
-        return [dict(r) for r in rows]
+    try:
+        with _get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM expenses WHERE expense_date LIKE ? ORDER BY expense_date, id",
+                (f"{prefix}%",),
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except sqlite3.Error as exc:
+        logger.error("Failed to get expenses for month %s-%s: %s", year, month, exc)
+        return []

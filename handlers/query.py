@@ -6,7 +6,7 @@ from calendar import monthrange
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from config import ALLOWED_USER_ID
+from config import ALLOWED_USER_IDS
 from services import ai, sheets
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,7 @@ async def handle_query(
     question: str,
 ) -> None:
     user_id = update.effective_user.id
-    if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
+    if ALLOWED_USER_IDS and user_id not in ALLOWED_USER_IDS:
         await update.message.reply_text("Acesso negado.")
         return
 

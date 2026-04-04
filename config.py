@@ -5,7 +5,20 @@ load_dotenv()
 
 # Telegram
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
-ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID", "0"))
+
+def _parse_user_ids() -> set[int]:
+    """Parse ALLOWED_USER_IDS env var (comma-separated) into a set of ints."""
+    raw = os.getenv("ALLOWED_USER_IDS", os.getenv("ALLOWED_USER_ID", ""))
+    ids = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if part.isdigit():
+            ids.add(int(part))
+    return ids
+
+ALLOWED_USER_IDS: set[int] = _parse_user_ids()
+# Kept for scheduler backward compat — first user in the set (or 0 if empty)
+ALLOWED_USER_ID: int = next(iter(ALLOWED_USER_IDS), 0)
 
 # Anthropic
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")

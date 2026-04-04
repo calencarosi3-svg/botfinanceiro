@@ -12,7 +12,7 @@ from telegram.ext import (
     filters,
 )
 
-from config import TELEGRAM_TOKEN, ALLOWED_USER_ID, LOGS_DIR
+from config import TELEGRAM_TOKEN, ALLOWED_USER_IDS, LOGS_DIR
 from services.db import init_db
 from handlers.text import handle_text, handle_text_callback
 from handlers.pdf import handle_document, handle_confirmation_callback
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 async def cmd_start(update: Update, context) -> None:
-    if ALLOWED_USER_ID and update.effective_user.id != ALLOWED_USER_ID:
+    if ALLOWED_USER_IDS and update.effective_user.id not in ALLOWED_USER_IDS:
         return
     await update.message.reply_text(
         "Bot financeiro ativo!\n\n"
@@ -50,7 +50,7 @@ async def cmd_start(update: Update, context) -> None:
 
 
 async def cmd_help(update: Update, context) -> None:
-    if ALLOWED_USER_ID and update.effective_user.id != ALLOWED_USER_ID:
+    if ALLOWED_USER_IDS and update.effective_user.id not in ALLOWED_USER_IDS:
         return
     await update.message.reply_text(
         "*Comandos disponíveis:*\n\n"

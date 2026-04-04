@@ -10,7 +10,7 @@ import pdfplumber
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from config import ALLOWED_USER_ID, SHEET_COLUMNS
+from config import ALLOWED_USER_IDS, SHEET_COLUMNS
 from services import ai, sheets, db
 
 logger = logging.getLogger(__name__)
@@ -51,18 +51,29 @@ def _confirmation_keyboard(key: str) -> InlineKeyboardMarkup:
     ])
 
 
-async def save_expenses(expenses: list[dict], context_label: str) -> tuple[int, str]:
-    """Save expenses to Sheets + SQLite. Returns (count, error_msg or '')."""
-    error = ""
+async def save_expenses(expenses: list[dict], context_label: str) -> tuple[int, list[str]]:
+    """Save expenses to Sheets + SQLite. Returns (count, list of warning messages)."""
+    warnings = []
+
+    sheets_ok = True
     try:
         sheets.append_rows(expenses)
-    except Exception as exc:
-        logger.error("Sheets batch append failed: %s", exc)
-        error = "Salvo localmente, mas houve erro ao salvar no Sheets."
+    except RuntimeError as exc:
+        logger.error("Sheets append failed: %s", exc)
+        warnings.append(f"Google Sheets: {exc}")
+        sheets_ok = False
 
-    count = db.record_expenses_bulk(expenses)
-    total = sum(float(e.get("Valor", 0)) for e in expenses)
-    return count, error
+    try:
+        count = db.record_expenses_bulk(expenses)
+    except RuntimeError as exc:
+        logger.critical("SQLite insert failed: %s", exc)
+        if not sheets_ok:
+            warnings.append("Banco local: falha crítica — gasto NÃO foi salvo em lugar nenhum!")
+        else:
+            warnings.append("Banco local: falha ao salvar localmente, mas foi salvo no Sheets.")
+        count = 0
+
+    return count, warnings
 
 
 # ---------------------------------------------------------------------------
@@ -82,11 +93,11 @@ async def handle_confirmation_callback(update: Update, context: ContextTypes.DEF
             await query.edit_message_text("Dados expirados. Envie novamente.")
             return
 
-        count, error = await save_expenses(expenses, key)
+        count, warnings = await save_expenses(expenses, key)
         total = sum(float(e.get("Valor", 0)) for e in expenses)
         msg = f"Inserido! {count} transações — R$ {total:,.2f}"
-        if error:
-            msg += f"\n{error}"
+        if warnings:
+            msg += "\n\n⚠️ " + "\n⚠️ ".join(warnings)
         await query.edit_message_text(msg)
 
     elif data.startswith("cancel_"):
@@ -134,7 +145,7 @@ async def handle_confirmation_callback(update: Update, context: ContextTypes.DEF
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
+    if ALLOWED_USER_IDS and user_id not in ALLOWED_USER_IDS:
         await update.message.reply_text("Acesso negado.")
         return
 

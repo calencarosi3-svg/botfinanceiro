@@ -20,13 +20,27 @@ def _get_client() -> anthropic.Anthropic:
 
 
 def _chat(system: str, user: str, max_tokens: int = 1024) -> str:
-    response = _get_client().messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=max_tokens,
-        system=system,
-        messages=[{"role": "user", "content": user}],
-    )
-    return response.content[0].text.strip()
+    try:
+        response = _get_client().messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            timeout=60.0,
+        )
+        return response.content[0].text.strip()
+    except anthropic.APITimeoutError as exc:
+        logger.error("Anthropic API timeout: %s", exc)
+        raise RuntimeError("A IA demorou demais para responder. Tente novamente.") from exc
+    except anthropic.APIConnectionError as exc:
+        logger.error("Anthropic API connection error: %s", exc)
+        raise RuntimeError("Sem conexão com a IA. Verifique a internet.") from exc
+    except anthropic.RateLimitError as exc:
+        logger.error("Anthropic rate limit: %s", exc)
+        raise RuntimeError("Limite de requisições atingido. Aguarde alguns instantes.") from exc
+    except anthropic.APIStatusError as exc:
+        logger.error("Anthropic API error %s: %s", exc.status_code, exc.message)
+        raise RuntimeError(f"Erro na IA (código {exc.status_code}). Tente novamente.") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +83,10 @@ def _parse_json(raw: str) -> any:
 def extract_from_text(message: str) -> dict:
     """Extract a single expense from a user text message."""
     system = _EXPENSE_SYSTEM.format(today=date.today().isoformat())
-    raw = _chat(system, message)
+    try:
+        raw = _chat(system, message)
+    except RuntimeError:
+        raise
     try:
         data = _parse_json(raw)
         if "erro" in data:
@@ -82,7 +99,10 @@ def extract_from_text(message: str) -> dict:
 
 def extract_from_pdf(pdf_text: str) -> list[dict]:
     """Extract all transactions from PDF text of a credit card statement."""
-    raw = _chat(_PDF_SYSTEM, pdf_text, max_tokens=4096)
+    try:
+        raw = _chat(_PDF_SYSTEM, pdf_text, max_tokens=4096)
+    except RuntimeError:
+        raise
     try:
         data = _parse_json(raw)
         if not isinstance(data, list):

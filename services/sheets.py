@@ -21,9 +21,14 @@ _worksheet: gspread.Worksheet | None = None
 def _get_worksheet() -> gspread.Worksheet:
     global _client, _worksheet
     if _worksheet is None:
-        creds = Credentials.from_service_account_file(GOOGLE_CREDENTIALS_FILE, scopes=SCOPES)
-        _client = gspread.authorize(creds)
-        spreadsheet = _client.open_by_key(SPREADSHEET_ID)
+        try:
+            creds = Credentials.from_service_account_file(GOOGLE_CREDENTIALS_FILE, scopes=SCOPES)
+            _client = gspread.authorize(creds)
+            spreadsheet = _client.open_by_key(SPREADSHEET_ID)
+        except FileNotFoundError as exc:
+            raise RuntimeError(f"Arquivo de credenciais não encontrado: {GOOGLE_CREDENTIALS_FILE}") from exc
+        except gspread.exceptions.GSpreadException as exc:
+            raise RuntimeError(f"Erro ao conectar ao Google Sheets: {exc}") from exc
         try:
             _worksheet = spreadsheet.worksheet(SHEET_NAME)
         except gspread.WorksheetNotFound:
@@ -71,10 +76,14 @@ def append_row(expense: dict) -> None:
     try:
         ws = _get_worksheet()
         ws.append_row(row, value_input_option="USER_ENTERED")
-    except Exception as exc:
+    except gspread.exceptions.GSpreadException as exc:
         logger.warning("Sheet append failed (%s), reconnecting…", exc)
-        ws = _reconnect()
-        ws.append_row(row, value_input_option="USER_ENTERED")
+        try:
+            ws = _reconnect()
+            ws.append_row(row, value_input_option="USER_ENTERED")
+        except gspread.exceptions.GSpreadException as exc2:
+            logger.error("Sheet append failed after reconnect: %s", exc2)
+            raise RuntimeError("Erro ao salvar no Google Sheets.") from exc2
 
 
 def append_rows(expenses: list[dict]) -> None:
@@ -85,10 +94,14 @@ def append_rows(expenses: list[dict]) -> None:
     try:
         ws = _get_worksheet()
         ws.append_rows(rows, value_input_option="USER_ENTERED")
-    except Exception as exc:
+    except gspread.exceptions.GSpreadException as exc:
         logger.warning("Sheet batch append failed (%s), reconnecting…", exc)
-        ws = _reconnect()
-        ws.append_rows(rows, value_input_option="USER_ENTERED")
+        try:
+            ws = _reconnect()
+            ws.append_rows(rows, value_input_option="USER_ENTERED")
+        except gspread.exceptions.GSpreadException as exc2:
+            logger.error("Sheet batch append failed after reconnect: %s", exc2)
+            raise RuntimeError("Erro ao salvar no Google Sheets.") from exc2
 
 
 def get_rows_for_date(for_date: str) -> list[dict]:
@@ -141,11 +154,15 @@ def _filter_rows(predicate) -> list[dict]:
             expected_headers=SHEET_COLUMNS,
             numericise_ignore=["all"],
         )
-    except Exception as exc:
+    except gspread.exceptions.GSpreadException as exc:
         logger.warning("Sheet read failed (%s), reconnecting…", exc)
-        ws = _reconnect()
-        all_records = ws.get_all_records(
-            expected_headers=SHEET_COLUMNS,
-            numericise_ignore=["all"],
-        )
+        try:
+            ws = _reconnect()
+            all_records = ws.get_all_records(
+                expected_headers=SHEET_COLUMNS,
+                numericise_ignore=["all"],
+            )
+        except gspread.exceptions.GSpreadException as exc2:
+            logger.error("Sheet read failed after reconnect: %s", exc2)
+            raise RuntimeError("Erro ao ler dados do Google Sheets.") from exc2
     return [_normalize_row(r) for r in all_records if predicate(r)]
