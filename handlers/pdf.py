@@ -8,12 +8,19 @@ from datetime import date
 
 import pdfplumber
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest as TgBadRequest
 from telegram.ext import ContextTypes
 
 from config import ALLOWED_USER_IDS, SHEET_COLUMNS
 from services import ai, sheets, db
 
 logger = logging.getLogger(__name__)
+
+
+def _escape_md(text: str) -> str:
+    for ch in ("*", "_", "`", "["):
+        text = text.replace(ch, f"\\{ch}")
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -31,7 +38,7 @@ def _build_preview(expenses: list[dict], source: str) -> str:
     ]
     for e in expenses[:5]:
         valor = float(e.get("Valor", 0))
-        desc = e.get("Estabelecimento", "?")[:30]
+        desc = _escape_md(e.get("Estabelecimento", "?")[:30])
         data = e.get("Data", "")
         lines.append(f"  {data}  R$ {valor:.2f}  {desc}")
     if len(expenses) > 5:
@@ -131,12 +138,19 @@ async def handle_confirmation_callback(update: Update, context: ContextTypes.DEF
         context.user_data[f"pending_{key}"] = reprocessed
         preview = _build_preview(reprocessed, "Reprocessado")
         keyboard = _confirmation_keyboard(key)
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=preview,
-            reply_markup=keyboard,
-            parse_mode="Markdown",
-        )
+        try:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=preview,
+                reply_markup=keyboard,
+                parse_mode="Markdown",
+            )
+        except TgBadRequest:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=preview,
+                reply_markup=keyboard,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +226,10 @@ async def _handle_pdf(update, context, document) -> None:
     context.user_data[f"pending_{key}"] = expenses
     preview = _build_preview(expenses, "PDF")
     keyboard = _confirmation_keyboard(key)
-    await update.message.reply_text(preview, reply_markup=keyboard, parse_mode="Markdown")
+    try:
+        await update.message.reply_text(preview, reply_markup=keyboard, parse_mode="Markdown")
+    except TgBadRequest:
+        await update.message.reply_text(preview, reply_markup=keyboard)
 
 
 def _extract_text(pdf_path: str) -> str:
@@ -261,7 +278,10 @@ async def _handle_csv(update, context, document) -> None:
     context.user_data[f"pending_{key}"] = expenses
     preview = _build_preview(expenses, "CSV")
     keyboard = _confirmation_keyboard(key)
-    await update.message.reply_text(preview, reply_markup=keyboard, parse_mode="Markdown")
+    try:
+        await update.message.reply_text(preview, reply_markup=keyboard, parse_mode="Markdown")
+    except TgBadRequest:
+        await update.message.reply_text(preview, reply_markup=keyboard)
 
 
 # ---------------------------------------------------------------------------
