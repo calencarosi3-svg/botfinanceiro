@@ -1,7 +1,7 @@
 import logging
 from datetime import date
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from config import ALLOWED_USER_ID
@@ -45,30 +45,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(f"Não entendi o gasto: {exc}")
         return
 
-    # Fill missing date with today
     if not expense.get("Data"):
         expense["Data"] = date.today().isoformat()
 
-    try:
-        sheets.append_row(expense)
-    except Exception as exc:
-        logger.error("Sheets append failed: %s", exc)
-        await update.message.reply_text(
-            "Gasto extraído mas não salvei no Sheets (erro de conexão). "
-            "Salvando apenas localmente."
-        )
+    # Store pending and ask for confirmation
+    key = f"txt_{update.message.message_id}"
+    context.user_data[f"pending_{key}"] = [expense]
 
-    db.record_expense(
-        expense_date=expense.get("Data", date.today().isoformat()),
-        valor=float(expense.get("Valor", 0)),
-        estabelecimento=expense.get("Estabelecimento", ""),
-        categoria=expense.get("Categoria", ""),
-        banco=expense.get("Banco", ""),
-        tipo=expense.get("Tipo", ""),
-        obs=expense.get("Obs", ""),
-    )
-
-    valor = expense.get("Valor", 0)
+    valor = float(expense.get("Valor", 0))
     estabelecimento = expense.get("Estabelecimento", "?")
     categoria = expense.get("Categoria", "")
     banco = expense.get("Banco", "")
@@ -76,9 +60,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     data = expense.get("Data", "")
 
     lines = [
-        f"Gasto registrado!",
+        "*Confirme o gasto:*\n",
         f"Data: {data}",
-        f"Valor: R$ {float(valor):.2f}",
+        f"Valor: R$ {valor:.2f}",
         f"Estabelecimento: {estabelecimento}",
         f"Categoria: {categoria}",
     ]
@@ -89,4 +73,58 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if expense.get("Obs"):
         lines.append(f"Obs: {expense['Obs']}")
 
-    await update.message.reply_text("\n".join(lines))
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("Confirmar", callback_data=f"confirm_{key}"),
+            InlineKeyboardButton("Cancelar", callback_data=f"cancel_{key}"),
+        ],
+    ])
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        reply_markup=keyboard,
+        parse_mode="Markdown",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback handler for text expense confirmations
+# ---------------------------------------------------------------------------
+
+async def handle_text_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data.startswith("confirm_txt_"):
+        key = data.replace("confirm_", "")
+        expenses = context.user_data.pop(f"pending_{key}", None)
+        if not expenses or not expenses[0]:
+            await query.edit_message_text("Dados expirados. Envie novamente.")
+            return
+
+        expense = expenses[0]
+        try:
+            sheets.append_row(expense)
+        except Exception as exc:
+            logger.error("Sheets append failed: %s", exc)
+
+        db.record_expense(
+            expense_date=expense.get("Data", date.today().isoformat()),
+            valor=float(expense.get("Valor", 0)),
+            estabelecimento=expense.get("Estabelecimento", ""),
+            categoria=expense.get("Categoria", ""),
+            banco=expense.get("Banco", ""),
+            tipo=expense.get("Tipo", ""),
+            obs=expense.get("Obs", ""),
+        )
+
+        valor = float(expense.get("Valor", 0))
+        await query.edit_message_text(
+            f"Gasto registrado! R$ {valor:.2f} — {expense.get('Estabelecimento', '?')}"
+        )
+
+    elif data.startswith("cancel_txt_"):
+        key = data.replace("cancel_", "")
+        context.user_data.pop(f"pending_{key}", None)
+        await query.edit_message_text("Gasto cancelado.")

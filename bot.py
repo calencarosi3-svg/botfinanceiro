@@ -6,6 +6,7 @@ import sys
 from telegram import Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
     filters,
@@ -13,8 +14,8 @@ from telegram.ext import (
 
 from config import TELEGRAM_TOKEN, ALLOWED_USER_ID, LOGS_DIR
 from services.db import init_db
-from handlers.text import handle_text
-from handlers.pdf import handle_document
+from handlers.text import handle_text, handle_text_callback
+from handlers.pdf import handle_document, handle_confirmation_callback
 import scheduler
 
 # ---------------------------------------------------------------------------
@@ -104,6 +105,10 @@ def main() -> None:
 
     # Text messages (expenses + queries)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    # Confirmation callbacks (buttons)
+    app.add_handler(CallbackQueryHandler(handle_text_callback, pattern=r"^(confirm|cancel)_txt_"))
+    app.add_handler(CallbackQueryHandler(handle_confirmation_callback, pattern=r"^(confirm|cancel|reprocess)_(csv|pdf)_"))
 
     # Scheduler: run every 60 seconds
     app.job_queue.run_repeating(_scheduler_job, interval=60, first=10)
